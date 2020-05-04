@@ -42,7 +42,6 @@ async function getMovieData(title) {
   
       } else {
         if (db[title] != "workingonit") {
-          return true
         }
       }
     }
@@ -50,18 +49,21 @@ async function getMovieData(title) {
     url = "http://www.omdbapi.com/?t=mytitle&apikey=b5305899".replace("mytitle", title.replace(/[^a-zA-Z ]/g, "").replace(/ /g, "+"))
     open("db.json", "a", {[title]: "workingonit"})
     request.get(url, (error, response, body) => {
-/*       console.log(":"+title)
- */      try {
+      /* console.log(":"+title )*/
+      try {
         res = JSON.parse(body)
       } catch(error) {
         console.error(error)
-        getMovieData(title)
+        open("db.json", "a", {[title]: {"Response": "True", "Runtime": "45 min"}})
       }
       /* console.log(body) */
+      /* console.log("yes") */
       open("db.json", "a", {[title]: res})
       resolve()
     })
 
+  }).catch(error => {
+    resolve()
   })
 
 }
@@ -77,7 +79,15 @@ function getRuntime(dict) {
   } else if (dict["Runtime"] == "N/A") {
     return 45
   } else {
-    return Number(dict["Runtime"].split("")[0])
+    return Number(dict["Runtime"].split(" ")[0])
+  }
+}
+
+function getGenres(dict) {
+  if (dict["Genre"]) {
+    return dict["Genre"].split(", ")
+  } else {
+    return []
   }
 }
 
@@ -85,7 +95,10 @@ async function generateNetfluxDict(path) {
   fullDict = {
     "counts": {},
     "dates": [],
-    "rawLengths": []
+    "rawLengths": {},
+    "genres": {},
+    "averages": {},
+    "minutes": {}
   }
   rawFile = open(path, "r")
   rawLines = rawFile.split("\n").slice(1, -1) // Split at newlines
@@ -104,28 +117,72 @@ async function generateNetfluxDict(path) {
     }
     // Fill dates subdicts
     if (date in fullDict["dates"]) {
-      fullDict["dates"][date].push(justTitle)
+      fullDict["dates"][date]["episodes"].push(justTitle)
     } else {
-      fullDict["dates"][date] = [justTitle]
+      fullDict["dates"][date] = {"episodes": [justTitle]}
     }
   })
   // Wait for every download
-  titles = []
-  keys(fullDict["counts"]).forEach(function (item, index) {
-    titles.push(getMovieData(item))
-  })
   console.log("eddig1")
+  titles = keys(fullDict["counts"]).map(item => getMovieData(item))
   const bar = await Promise.all(titles)
   console.log("eddig2")
   // Fill rawLengths
+  rawTitles = keys(fullDict["counts"])
   dbJson = open("db.json", "json")
-  keys(fullDict["counts"]).forEach(function (item, index) {
-    fullDict["rawLength"][item] = getRuntime(dbJson[item])
+  rawTitles.map(function (stuff, index) {
+    /* console.log(":"+stuff) */
+    fullDict["rawLengths"][stuff] = getRuntime(dbJson[stuff]) 
   })
   console.log(fullDict)
+  // Add viewTime to dates
+  keys(fullDict["dates"]).forEach(function (date, index) {
+    fullDict["dates"][date]["episodes"].forEach(function (ep, index) {
+      if (fullDict["dates"][date]["watctime"]) {
+        fullDict["dates"][date]["watctime"] += fullDict["rawLengths"][ep]
+      } else {
+        fullDict["dates"][date]["watctime"] = fullDict["rawLengths"][ep]
+      }
+    })
+  })
+  // Add Most watched genres
+  rawTitles.forEach(function (item, index) {
+    currentGenres = getGenres(dbJson[item])
+    currentGenres.forEach(function (genre) {
+      if (fullDict["genres"][genre]) {
+        fullDict["genres"][genre] += fullDict["counts"][item]
+      } else {
+        fullDict["genres"][genre] = fullDict["counts"][item]
+      }
+    })
+  })
+  // Create averages for data
+  byMonth = {}
+  keys(fullDict["dates"]).forEach(function (item, index) {
+    date = item.split("/")
+    month = date[0]+"/"+date[2]
+    if (byMonth[month]) {
+      byMonth[month]["full"] += fullDict["dates"][item]["watchtime"]
+      byMonth[month]["days"] += 1
+    } else {
+      byMonth[month]= {"full": fullDict["dates"][item]["watchtime"], "days": 1}
+    }
+    fullDict["averages"]["byMonth"] = byMonth
+
+  })
+  // Calculate minutes watched for every show
+  rawTitles.forEach(function (title, index) {
+    fullDict["minutes"][title] = Math.floor(fullDict["counts"][title]*fullDict["rawLengths"][title]/60*10)/10
+  })
   return Promise.resolve(fullDict)
 }
 
 generateNetfluxDict("peti.csv").then(function (result) {
   console.log(result)
 })
+
+// last 2 months, by days
+// last 6 months, by weeks
+// last 2 years, by months
+
+// Genres, by episodes
